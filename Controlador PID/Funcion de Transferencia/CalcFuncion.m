@@ -11,9 +11,6 @@ y = datos{:, 3}; % Salida (Respuesta de la planta: RPM)
 Ts = 0.02; 
 motor_data = iddata(y, u, Ts);
 
-% (Opcional) Eliminar el retraso medio o "detrending" 
-% motor_data = detrend(motor_data); 
-
 % 3. Estimar la función de transferencia
 % Un motor DC clásico se modela como un sistema de primer orden 
 % (1 polo, 0 ceros) para la velocidad.
@@ -26,9 +23,11 @@ sys = tfest(motor_data, num_polos, num_ceros);
 disp('Función de transferencia del motor:')
 sys
 
-% Genera una gráfica para comparar qué tan bien se ajusta 
-% el modelo matemático a tus datos reales de la prueba
-figure;
-compare(motor_data, sys);
-grid on;
-title('Comparación de Datos Reales vs. Modelo Estimado');
+% Grafica Real vs sistema
+%figure;
+%compare(motor_data, sys);
+%grid on;
+%title('Comparación de Datos Reales vs. Modelo Estimado');
+
+controlador_inicial = pidtune(sys, 'PID'); 
+pidTuner(sys, controlador_inicial);
