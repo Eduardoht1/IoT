@@ -24,7 +24,7 @@ sys = tfest(motor_data, num_polos, num_ceros);
 % 4. Resultados
 % Imprime la función de transferencia en la consola
 disp('Función de transferencia del motor:')
-disp(sys)
+sys
 
 % Genera una gráfica para comparar qué tan bien se ajusta 
 % el modelo matemático a tus datos reales de la prueba
