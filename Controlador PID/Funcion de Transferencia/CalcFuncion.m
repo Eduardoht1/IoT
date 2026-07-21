@@ -1,7 +1,11 @@
+clc
+clear
+close all
+
 % 1. Importar los datos del CSV
 datos = readtable('datos_motor.csv');
 
-% Extraer las columnas como vectores
+% Extraer las columnas como vectore     s
 t = datos{:, 1} / 1000; %Segundos
 u = datos{:, 2}; % Entrada (Señal de control: PWM)
 y = datos{:, 3}; % Salida (Respuesta de la planta: RPM)
@@ -24,10 +28,10 @@ disp('Función de transferencia del motor:')
 sys
 
 % Grafica Real vs sistema
-%figure;
-%compare(motor_data, sys);
-%grid on;
-%title('Comparación de Datos Reales vs. Modelo Estimado');
+figure;
+compare(motor_data, sys);
+grid on;
+title('Comparación de Datos Reales vs. Modelo Estimado');
 
 controlador_inicial = pidtune(sys, 'PID'); 
 pidTuner(sys, controlador_inicial);

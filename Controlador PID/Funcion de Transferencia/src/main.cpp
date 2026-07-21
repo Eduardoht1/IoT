@@ -91,7 +91,7 @@ void loop() {
       interrupts();
 
       // Cálculo de RPM forzado a ser siempre positivo usando abs()
-      float rpm = abs(((float)currentPulses / PPR) * (60000.0 / interval) / 49.0);
+      float rpm = abs(((float)currentPulses / PPR) * (60000.0 / interval) / 35.0);
 
       // Imprime solo el tiempo y las RPM
       Serial.print(elapsedTime);
