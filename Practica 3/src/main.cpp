@@ -32,7 +32,7 @@ const float REAL_PPR = PPR * GEAR_RATIO;
 
 // Constantes del Controlador PI
 float Kp = 1.5;   
-float Ki = 12.5;  
+float Ki = 12.5;    
 
 // Variables del PID
 float setpoint = 70.0; // Velocidad objetivo inicial
