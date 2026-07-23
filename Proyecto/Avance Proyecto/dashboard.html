@@ -95,7 +95,7 @@
 
                 <!-- Botón Actualizar (Unificado) -->
                 <div class="flex flex-col space-y-2 justify-end">
-                    <button onclick="enviarParametros()" class="bg-blue-600 hover:bg-blue-500 text-white p-2 rounded transition shadow-md font-bold w-full">
+                    <button id="btn-actualizar" onclick="enviarParametros()" class="bg-blue-600 hover:bg-blue-500 text-white p-2 rounded transition shadow-md font-bold w-full">
                         Actualizar
                     </button>
                 </div>
@@ -130,16 +130,19 @@
         const INFLUX_ORG    = "UP-IoT";
         const INFLUX_BUCKET = "iot-verano";
 
-        // Configuración MQTT para los controles (Reemplazar IP si es necesario)
-        const mqttClient = new Paho.MQTT.Client("192.168.137.1", 9001, "Dashboard_" + parseInt(Math.random() * 100, 10));
+        // Configuración MQTT para los controles
+        const mqttClient = new Paho.MQTT.Client("localhost", 9001, "Dashboard_" + parseInt(Math.random() * 100, 10));
         mqttClient.connect({ onSuccess: () => console.log("MQTT Conectado para controles") });
 
-        // Estado inicial del motor
+        // Variables de estado
         let motorEncendido = true;
+        let savedSetpoint = 0;
+        let savedDirection = 1;
 
         // Función unificada para enviar RPM y Dirección
         function enviarParametros() {
-            if(!mqttClient.isConnected()) return;
+            // Si no está conectado o el motor está apagado, bloqueamos el envío
+            if(!mqttClient.isConnected() || !motorEncendido) return;
 
             // 1. Enviar Setpoint (solo si el input no está vacío)
             const sp = document.getElementById('input-setpoint').value;
@@ -147,6 +150,7 @@
                 const messageSp = new Paho.MQTT.Message(sp);
                 messageSp.destinationName = "iot/motor/setpoint";
                 mqttClient.send(messageSp);
+                savedSetpoint = parseFloat(sp); // Guardar valor
             }
 
             // 2. Enviar Dirección siempre
@@ -154,36 +158,66 @@
             const messageDir = new Paho.MQTT.Message(dir);
             messageDir.destinationName = "iot/motor/direccion";
             mqttClient.send(messageDir);
+            savedDirection = parseInt(dir); // Guardar valor
         }
 
+        // Función de Power con estado en memoria
         function toggleMotor() {
             motorEncendido = !motorEncendido;
             
-            const btn = document.getElementById('btn-power');
+            const btnPower = document.getElementById('btn-power');
+            const btnActualizar = document.getElementById('btn-actualizar');
             const motorDot = document.getElementById('motor-dot');
             const motorStatus = document.getElementById('motor-status');
             
             if (motorEncendido) {
-                btn.innerText = "Apagar Motor";
-                btn.className = "bg-red-600 hover:bg-red-500 text-white p-2 rounded transition shadow-md font-bold w-full";
+                // MODO ENCENDIDO
+                btnPower.innerText = "Apagar Motor";
+                btnPower.className = "bg-red-600 hover:bg-red-500 text-white p-2 rounded transition shadow-md font-bold w-full";
                 
                 motorDot.classList.replace('bg-red-500', 'bg-green-500');
                 motorDot.classList.replace('shadow-[0_0_8px_rgba(239,68,68,0.8)]', 'shadow-[0_0_8px_rgba(34,197,94,0.8)]');
                 motorStatus.innerText = 'Motor Encendido';
+
+                // Rehabilitar botón de Actualizar
+                btnActualizar.disabled = false;
+                btnActualizar.className = "bg-blue-600 hover:bg-blue-500 text-white p-2 rounded transition shadow-md font-bold w-full";
+
+                // Re-enviar vía MQTT los valores que teníamos antes de apagar
+                if(mqttClient.isConnected()) {
+                    let msgSp = new Paho.MQTT.Message(savedSetpoint.toString());
+                    msgSp.destinationName = "iot/motor/setpoint";
+                    mqttClient.send(msgSp);
+
+                    let msgDir = new Paho.MQTT.Message(savedDirection.toString());
+                    msgDir.destinationName = "iot/motor/direccion";
+                    mqttClient.send(msgDir);
+                }
+
             } else {
-                btn.innerText = "Prender Motor";
-                btn.className = "bg-green-600 hover:bg-green-500 text-white p-2 rounded transition shadow-md font-bold w-full";
+                // MODO APAGADO
+                btnPower.innerText = "Prender Motor";
+                btnPower.className = "bg-green-600 hover:bg-green-500 text-white p-2 rounded transition shadow-md font-bold w-full";
                 
                 motorDot.classList.replace('bg-green-500', 'bg-red-500');
                 motorDot.classList.replace('shadow-[0_0_8px_rgba(34,197,94,0.8)]', 'shadow-[0_0_8px_rgba(239,68,68,0.8)]');
                 motorStatus.innerText = 'Motor Apagado';
-            }
 
-            if(mqttClient.isConnected()) {
-                const payload = motorEncendido ? "1" : "0";
-                const message = new Paho.MQTT.Message(payload);
-                message.destinationName = "iot/motor/power";
-                mqttClient.send(message);
+                // Deshabilitar botón de Actualizar visual y funcionalmente
+                btnActualizar.disabled = true;
+                btnActualizar.className = "bg-gray-600 text-gray-400 p-2 rounded transition shadow-md font-bold w-full cursor-not-allowed";
+
+                // Guardar los valores actuales del Input antes de mandar 0
+                let currentInput = document.getElementById('input-setpoint').value;
+                if(currentInput !== "") savedSetpoint = parseFloat(currentInput);
+                savedDirection = parseInt(document.getElementById('input-dir').value);
+
+                // Enviar comando vía MQTT para establecer el Setpoint en 0
+                if(mqttClient.isConnected()) {
+                    const message = new Paho.MQTT.Message("0");
+                    message.destinationName = "iot/motor/setpoint";
+                    mqttClient.send(message);
+                }
             }
         }
 
@@ -196,7 +230,7 @@
                 datasets: [
                     {
                         label: 'RPM',
-                        borderColor: '#60a5fa', // Azul
+                        borderColor: '#60a5fa',
                         backgroundColor: 'rgba(96, 165, 250, 0.1)',
                         data: Array(60).fill(0),
                         borderWidth: 2,
@@ -206,7 +240,7 @@
                     },
                     {
                         label: 'Setpoint',
-                        borderColor: '#f87171', // Rojo
+                        borderColor: '#f87171',
                         borderDash: [5, 5],
                         data: Array(60).fill(0),
                         borderWidth: 2,
@@ -241,7 +275,6 @@
             const wifiDot = document.getElementById('wifi-dot');
             const wifiStatus = document.getElementById('wifi-status');
             
-            // Lógica del WiFi
             if(isConnected) {
                 wifiDot.classList.replace('bg-red-500', 'bg-green-500');
                 wifiDot.classList.replace('shadow-[0_0_8px_rgba(239,68,68,0.8)]', 'shadow-[0_0_8px_rgba(34,197,94,0.8)]');
@@ -252,16 +285,24 @@
                 wifiStatus.innerText = 'ESP Desconectada';
             }
 
-            // Textos y valores de las tarjetas
             document.getElementById('val-rpm').innerText = rpm.toFixed(1);
-            document.getElementById('val-setpoint').innerText = sp.toFixed(1); // Actualiza el RPM Objetivo
+            
+            // Lógica: Si está apagado, mostramos el objetivo guardado, si no, el de InfluxDB
+            if(motorEncendido) {
+                document.getElementById('val-setpoint').innerText = sp.toFixed(1);
+                let textoDirObj = dir === 1 ? 'CW (Horario)' : 'CCW (Antihorario)';
+                document.getElementById('val-dir-obj').innerText = textoDirObj;
+            } else {
+                document.getElementById('val-setpoint').innerText = savedSetpoint.toFixed(1);
+                let textoDirObj = savedDirection === 1 ? 'CW (Horario)' : 'CCW (Antihorario)';
+                document.getElementById('val-dir-obj').innerText = textoDirObj;
+            }
+
             document.getElementById('val-error').innerText = error.toFixed(1);
             document.getElementById('val-pwm').innerText = pwm;
             
-            // Direcciones (Asume que `dir` dicta tanto el objetivo como el actual si vienen de la misma lectura)
             let textoDir = dir === 1 ? 'CW (Horario)' : 'CCW (Antihorario)';
             document.getElementById('val-dir').innerText = textoDir;
-            document.getElementById('val-dir-obj').innerText = textoDir; // Actualiza la Dirección Objetivo
             
             let pwmPct = ((pwm / 255) * 100).toFixed(1);
             let errPct = sp > 0 ? ((Math.abs(error) / sp) * 100).toFixed(1) : 0;
@@ -269,7 +310,6 @@
             document.getElementById('val-pwm-pct').innerText = `Duty Cycle: ${pwmPct}%`;
             document.getElementById('val-error-pct').innerText = `Error Relativo: ${errPct}%`;
 
-            // Gráfica
             motorChart.data.datasets[0].data.shift();
             motorChart.data.datasets[0].data.push(rpm);
             motorChart.data.datasets[1].data.shift();
@@ -278,18 +318,59 @@
         }
 
         async function fetchInfluxData() {
-            // === CONEXIÓN 4: Consulta Flux ===
-            // Esta consulta pide a InfluxDB los últimos valores
-            // de los campos del motor. Los nombres de campo deben
-            // coincidir EXACTAMENTE con los que publica el ESP32.
             const QUERY_FLUX = `
             from(bucket: "${INFLUX_BUCKET}")
               |> range(start: -60s)
-              |> filter(fn: (r) => r["_field"] == "rpm" or r["_field"] == "setpoint" or r["_field"] == "error" or r["_field"] == "pwm")
+              |> filter(fn: (r) => r["_field"] == "rpm" or r["_field"] == "setpoint" or r["_field"] == "error" or r["_field"] == "pwm" or r["_field"] == "direccion")
               |> last()
             `;
-            
-            // Aquí continuarías con la lógica para hacer el llamado POST a la API de InfluxDB
+
+            try {
+                const response = await fetch(`${INFLUX_URL}/api/v2/query?org=${INFLUX_ORG}`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Token ${INFLUX_TOKEN}`,
+                        'Content-Type': 'application/vnd.flux',
+                        'Accept': 'application/csv'
+                    },
+                    body: QUERY_FLUX
+                });
+
+                if (!response.ok) return;
+
+                const csvData = await response.text();
+                
+                let rpm = 0, sp = 0, error = 0, pwm = 0, dir = 1;
+                let isConnected = false;
+                
+                const rows = csvData.split('\n');
+                let valIdx = -1;
+                let fieldIdx = -1;
+
+                rows.forEach(row => {
+                    const cols = row.split(',');
+                    if (row.includes('_field') && row.includes('_value')) {
+                        valIdx = cols.indexOf('_value');
+                        fieldIdx = cols.indexOf('_field');
+                    } else if (valIdx !== -1 && fieldIdx !== -1 && cols.length > Math.max(valIdx, fieldIdx)) {
+                        const field = cols[fieldIdx].trim().replace(/\r/g, '');
+                        const value = parseFloat(cols[valIdx]);
+                        
+                        if (field === 'rpm' && !isNaN(value)) { rpm = value; isConnected = true; }
+                        if (field === 'setpoint' && !isNaN(value)) sp = value;
+                        if (field === 'error' && !isNaN(value)) error = value;
+                        if (field === 'pwm' && !isNaN(value)) pwm = value;
+                        if (field === 'direccion' && !isNaN(value)) dir = value;
+                    }
+                });
+
+                if (isConnected) {
+                    updateUI(rpm, sp, error, pwm, dir, true);
+                }
+
+            } catch (err) {
+                updateUI(0, 0, 0, 0, 1, false); 
+            }
         }
 
         setInterval(fetchInfluxData, 1000);
