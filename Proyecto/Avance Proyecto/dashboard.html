@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard Control DC - InfluxDB</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js"></script>
+    <style>
+        /* Fondo gris casi negro y texto claro */
+        body { background-color: #121212; color: #f3f4f6; }
+        /* Tarjetas en un gris oscuro con bordes azules */
+        .card { background-color: #1e1e1e; border: 1px solid #3b82f6; }
+        /* Acentos en tono azul claro */
+        .accent-text { color: #60a5fa; }
+        /* Contenedor estricto para forzar el tamaño de la gráfica */
+        .chart-container { position: relative; height: 400px; width: 100%; }
+    </style>
+</head>
+<body class="p-6 font-sans">
+    <div class="max-w-7xl mx-auto">
+        
+        <!-- Encabezado y Estados de Sistema -->
+        <div class="flex flex-col md:flex-row justify-between items-center mb-6 gap-4">
+            <h1 class="text-3xl font-bold accent-text text-center md:text-left w-full md:w-auto">Monitor del Motor DC (PID)</h1>
+            
+            <!-- Contenedor de Indicadores -->
+            <div class="flex items-center space-x-4">
+                <!-- Indicador de Estado del Motor -->
+                <div class="flex items-center space-x-2 bg-gray-800 px-4 py-2 rounded-full border border-gray-600 shadow-sm">
+                    <div id="motor-dot" class="w-3 h-3 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.8)]"></div>
+                    <span id="motor-status" class="text-sm font-semibold text-gray-200 tracking-wide">Motor Encendido</span>
+                </div>
+
+                <!-- Indicador de Conexión WiFi ESP -->
+                <div class="flex items-center space-x-2 bg-gray-800 px-4 py-2 rounded-full border border-gray-600 shadow-sm">
+                    <div id="wifi-dot" class="w-3 h-3 rounded-full bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.8)]"></div>
+                    <span id="wifi-status" class="text-sm font-semibold text-gray-200 tracking-wide">ESP Desconectada</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Métricas Principales (Ahora 4 columnas) -->
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+            
+            <!-- NUEVO: Bloque Objetivo -->
+            <div class="card p-4 rounded-lg text-center shadow-lg flex flex-col justify-center">
+                <p class="text-sm text-gray-400 uppercase tracking-wide">Objetivo (Setpoint)</p>
+                <p id="val-setpoint" class="text-5xl font-bold text-white mt-2">0.0</p>
+                <p id="val-dir-obj" class="text-xl font-bold text-gray-300 mt-2">CW (Horario)</p>
+            </div>
+
+            <!-- Bloque Unificado: RPM y Dirección -->
+            <div class="card p-4 rounded-lg text-center shadow-lg flex flex-col justify-center">
+                <p class="text-sm text-gray-400 uppercase tracking-wide">RPM Actual & Dirección</p>
+                <p id="val-rpm" class="text-5xl font-bold accent-text mt-2">0.0</p>
+                <p id="val-dir" class="text-xl font-bold text-green-400 mt-2">CW (Horario)</p>
+            </div>
+            
+            <!-- Bloque Error -->
+            <div class="card p-4 rounded-lg text-center shadow-lg flex flex-col justify-center">
+                <p class="text-sm text-gray-400 uppercase tracking-wide">Error PID</p>
+                <p id="val-error" class="text-4xl font-bold text-red-400 mt-2">0.0</p>
+                <p id="val-error-pct" class="text-sm text-gray-400 mt-1">Error Relativo: 0%</p>
+            </div>
+            
+            <!-- Bloque PWM -->
+            <div class="card p-4 rounded-lg text-center shadow-lg flex flex-col justify-center">
+                <p class="text-sm text-gray-400 uppercase tracking-wide">Señal PWM</p>
+                <p id="val-pwm" class="text-4xl font-bold text-yellow-300 mt-2">0</p>
+                <p id="val-pwm-pct" class="text-sm text-gray-400 mt-1">Duty Cycle: 0%</p>
+            </div>
+        </div>
+
+        <!-- Controles Unificados -->
+        <div class="card p-6 rounded-lg shadow-lg mb-6">
+            <h2 class="text-lg font-semibold text-gray-300 mb-4 border-b border-gray-700 pb-2">Panel de Control</h2>
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-6">
+                
+                <!-- Input Setpoint -->
+                <div class="flex flex-col space-y-2">
+                    <label class="text-sm text-gray-400">Nuevo Setpoint (RPM)</label>
+                    <input type="number" id="input-setpoint" class="bg-gray-800 text-white p-2 rounded w-full outline-none border border-gray-600 focus:border-blue-400 focus:ring-1 focus:ring-blue-400" placeholder="0 - 200">
+                </div>
+
+                <!-- Input Dirección -->
+                <div class="flex flex-col space-y-2">
+                    <label class="text-sm text-gray-400">Dirección de Rotación</label>
+                    <select id="input-dir" class="bg-gray-800 text-white p-2 rounded w-full outline-none border border-gray-600 focus:border-blue-400 focus:ring-1 focus:ring-blue-400">
+                        <option value="1">CW (Horario)</option>
+                        <option value="0">CCW (Antihorario)</option>
+                    </select>
+                </div>
+
+                <!-- Botón Actualizar (Unificado) -->
+                <div class="flex flex-col space-y-2 justify-end">
+                    <button onclick="enviarParametros()" class="bg-blue-600 hover:bg-blue-500 text-white p-2 rounded transition shadow-md font-bold w-full">
+                        Actualizar
+                    </button>
+                </div>
+
+                <!-- Botón Power -->
+                <div class="flex flex-col space-y-2">
+                    <label class="text-sm text-gray-400">Control de Energía</label>
+                    <button id="btn-power" onclick="toggleMotor()" class="bg-red-600 hover:bg-red-500 text-white p-2 rounded transition shadow-md font-bold">
+                        Apagar Motor
+                    </button>
+                </div>
+
+            </div>
+        </div>
+
+        <!-- Gráfica -->
+        <div class="card p-4 rounded-lg shadow-lg">
+            <div class="chart-container">
+                <canvas id="motorChart"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // === CONEXIÓN 1: URL de InfluxDB ===
+        const INFLUX_URL = "http://localhost:8086";
+        
+        // === CONEXIÓN 2: Token de InfluxDB ===
+        const INFLUX_TOKEN = "mi-token-super-secreto-2024";
+        
+        // === CONEXIÓN 3: Organización y Bucket ===
+        const INFLUX_ORG    = "UP-IoT";
+        const INFLUX_BUCKET = "iot-verano";
+
+        // Configuración MQTT para los controles (Reemplazar IP si es necesario)
+        const mqttClient = new Paho.MQTT.Client("192.168.137.1", 9001, "Dashboard_" + parseInt(Math.random() * 100, 10));
+        mqttClient.connect({ onSuccess: () => console.log("MQTT Conectado para controles") });
+
+        // Estado inicial del motor
+        let motorEncendido = true;
+
+        // Función unificada para enviar RPM y Dirección
+        function enviarParametros() {
+            if(!mqttClient.isConnected()) return;
+
+            // 1. Enviar Setpoint (solo si el input no está vacío)
+            const sp = document.getElementById('input-setpoint').value;
+            if (sp !== "") {
+                const messageSp = new Paho.MQTT.Message(sp);
+                messageSp.destinationName = "iot/motor/setpoint";
+                mqttClient.send(messageSp);
+            }
+
+            // 2. Enviar Dirección siempre
+            const dir = document.getElementById('input-dir').value;
+            const messageDir = new Paho.MQTT.Message(dir);
+            messageDir.destinationName = "iot/motor/direccion";
+            mqttClient.send(messageDir);
+        }
+
+        function toggleMotor() {
+            motorEncendido = !motorEncendido;
+            
+            const btn = document.getElementById('btn-power');
+            const motorDot = document.getElementById('motor-dot');
+            const motorStatus = document.getElementById('motor-status');
+            
+            if (motorEncendido) {
+                btn.innerText = "Apagar Motor";
+                btn.className = "bg-red-600 hover:bg-red-500 text-white p-2 rounded transition shadow-md font-bold w-full";
+                
+                motorDot.classList.replace('bg-red-500', 'bg-green-500');
+                motorDot.classList.replace('shadow-[0_0_8px_rgba(239,68,68,0.8)]', 'shadow-[0_0_8px_rgba(34,197,94,0.8)]');
+                motorStatus.innerText = 'Motor Encendido';
+            } else {
+                btn.innerText = "Prender Motor";
+                btn.className = "bg-green-600 hover:bg-green-500 text-white p-2 rounded transition shadow-md font-bold w-full";
+                
+                motorDot.classList.replace('bg-green-500', 'bg-red-500');
+                motorDot.classList.replace('shadow-[0_0_8px_rgba(34,197,94,0.8)]', 'shadow-[0_0_8px_rgba(239,68,68,0.8)]');
+                motorStatus.innerText = 'Motor Apagado';
+            }
+
+            if(mqttClient.isConnected()) {
+                const payload = motorEncendido ? "1" : "0";
+                const message = new Paho.MQTT.Message(payload);
+                message.destinationName = "iot/motor/power";
+                mqttClient.send(message);
+            }
+        }
+
+        // Configuración de Chart.js
+        const ctx = document.getElementById('motorChart').getContext('2d');
+        const motorChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: Array(60).fill(''),
+                datasets: [
+                    {
+                        label: 'RPM',
+                        borderColor: '#60a5fa', // Azul
+                        backgroundColor: 'rgba(96, 165, 250, 0.1)',
+                        data: Array(60).fill(0),
+                        borderWidth: 2,
+                        fill: true,
+                        tension: 0.2,
+                        pointRadius: 0
+                    },
+                    {
+                        label: 'Setpoint',
+                        borderColor: '#f87171', // Rojo
+                        borderDash: [5, 5],
+                        data: Array(60).fill(0),
+                        borderWidth: 2,
+                        fill: false,
+                        pointRadius: 0
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: false,
+                scales: {
+                    y: {
+                        min: 0,
+                        max: 200,
+                        grid: { color: '#374151' },
+                        ticks: { color: '#9ca3af' }
+                    },
+                    x: {
+                        grid: { display: false }
+                    }
+                },
+                plugins: {
+                    legend: { labels: { color: '#f3f4f6' } }
+                }
+            }
+        });
+
+        // Función de actualización de la Interfaz
+        function updateUI(rpm, sp, error, pwm, dir, isConnected) {
+            const wifiDot = document.getElementById('wifi-dot');
+            const wifiStatus = document.getElementById('wifi-status');
+            
+            // Lógica del WiFi
+            if(isConnected) {
+                wifiDot.classList.replace('bg-red-500', 'bg-green-500');
+                wifiDot.classList.replace('shadow-[0_0_8px_rgba(239,68,68,0.8)]', 'shadow-[0_0_8px_rgba(34,197,94,0.8)]');
+                wifiStatus.innerText = 'ESP Conectada';
+            } else {
+                wifiDot.classList.replace('bg-green-500', 'bg-red-500');
+                wifiDot.classList.replace('shadow-[0_0_8px_rgba(34,197,94,0.8)]', 'shadow-[0_0_8px_rgba(239,68,68,0.8)]');
+                wifiStatus.innerText = 'ESP Desconectada';
+            }
+
+            // Textos y valores de las tarjetas
+            document.getElementById('val-rpm').innerText = rpm.toFixed(1);
+            document.getElementById('val-setpoint').innerText = sp.toFixed(1); // Actualiza el RPM Objetivo
+            document.getElementById('val-error').innerText = error.toFixed(1);
+            document.getElementById('val-pwm').innerText = pwm;
+            
+            // Direcciones (Asume que `dir` dicta tanto el objetivo como el actual si vienen de la misma lectura)
+            let textoDir = dir === 1 ? 'CW (Horario)' : 'CCW (Antihorario)';
+            document.getElementById('val-dir').innerText = textoDir;
+            document.getElementById('val-dir-obj').innerText = textoDir; // Actualiza la Dirección Objetivo
+            
+            let pwmPct = ((pwm / 255) * 100).toFixed(1);
+            let errPct = sp > 0 ? ((Math.abs(error) / sp) * 100).toFixed(1) : 0;
+            
+            document.getElementById('val-pwm-pct').innerText = `Duty Cycle: ${pwmPct}%`;
+            document.getElementById('val-error-pct').innerText = `Error Relativo: ${errPct}%`;
+
+            // Gráfica
+            motorChart.data.datasets[0].data.shift();
+            motorChart.data.datasets[0].data.push(rpm);
+            motorChart.data.datasets[1].data.shift();
+            motorChart.data.datasets[1].data.push(sp);
+            motorChart.update();
+        }
+
+        async function fetchInfluxData() {
+            // === CONEXIÓN 4: Consulta Flux ===
+            // Esta consulta pide a InfluxDB los últimos valores
+            // de los campos del motor. Los nombres de campo deben
+            // coincidir EXACTAMENTE con los que publica el ESP32.
+            const QUERY_FLUX = `
+            from(bucket: "${INFLUX_BUCKET}")
+              |> range(start: -60s)
+              |> filter(fn: (r) => r["_field"] == "rpm" or r["_field"] == "setpoint" or r["_field"] == "error" or r["_field"] == "pwm")
+              |> last()
+            `;
+            
+            // Aquí continuarías con la lógica para hacer el llamado POST a la API de InfluxDB
+        }
+
+        setInterval(fetchInfluxData, 1000);
+    </script>
+</body>
+</html>
