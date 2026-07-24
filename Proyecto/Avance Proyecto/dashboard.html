@@ -141,10 +141,8 @@
 
         // Función unificada para enviar RPM y Dirección
         function enviarParametros() {
-            // Si no está conectado o el motor está apagado, bloqueamos el envío
             if(!mqttClient.isConnected() || !motorEncendido) return;
 
-            // 1. Enviar Setpoint (solo si el input no está vacío)
             const sp = document.getElementById('input-setpoint').value;
             if (sp !== "") {
                 const messageSp = new Paho.MQTT.Message(sp);
@@ -153,7 +151,6 @@
                 savedSetpoint = parseFloat(sp); // Guardar valor
             }
 
-            // 2. Enviar Dirección siempre
             const dir = document.getElementById('input-dir').value;
             const messageDir = new Paho.MQTT.Message(dir);
             messageDir.destinationName = "iot/motor/direccion";
@@ -183,7 +180,7 @@
                 btnActualizar.disabled = false;
                 btnActualizar.className = "bg-blue-600 hover:bg-blue-500 text-white p-2 rounded transition shadow-md font-bold w-full";
 
-                // Re-enviar vía MQTT los valores que teníamos antes de apagar
+                // Re-enviar vía MQTT los valores guardados
                 if(mqttClient.isConnected()) {
                     let msgSp = new Paho.MQTT.Message(savedSetpoint.toString());
                     msgSp.destinationName = "iot/motor/setpoint";
@@ -275,6 +272,7 @@
             const wifiDot = document.getElementById('wifi-dot');
             const wifiStatus = document.getElementById('wifi-status');
             
+            // Lógica del WiFi (Si hay conexión se pone verde, sino rojo)
             if(isConnected) {
                 wifiDot.classList.replace('bg-red-500', 'bg-green-500');
                 wifiDot.classList.replace('shadow-[0_0_8px_rgba(239,68,68,0.8)]', 'shadow-[0_0_8px_rgba(34,197,94,0.8)]');
@@ -287,7 +285,7 @@
 
             document.getElementById('val-rpm').innerText = rpm.toFixed(1);
             
-            // Lógica: Si está apagado, mostramos el objetivo guardado. Si está prendido, ignoramos el 0 de la latencia.
+            // Lógica: Evita el parpadeo de latencia si el motor está encendido pero InfluxDB aún manda un 0 temporal
             if(motorEncendido) {
                 if (sp === 0 && savedSetpoint !== 0) {
                     document.getElementById('val-setpoint').innerText = savedSetpoint.toFixed(1);
@@ -325,9 +323,10 @@
 
         async function fetchInfluxData() {
             // === CONEXIÓN 4: Consulta Flux ===
+            // Reducido a -5s para detectar la caída de la ESP más rápido
             const QUERY_FLUX = `
             from(bucket: "${INFLUX_BUCKET}")
-              |> range(start: -60s)
+              |> range(start: -5s)
               |> filter(fn: (r) => r["_field"] == "rpm" or r["_field"] == "setpoint" or r["_field"] == "error" or r["_field"] == "pwm" or r["_field"] == "direccion")
               |> last()
             `;
@@ -373,9 +372,13 @@
 
                 if (isConnected) {
                     updateUI(rpm, sp, error, pwm, dir, true);
+                } else {
+                    // Si no hay lecturas válidas en los últimos 5s, asume desconexión
+                    updateUI(0, 0, 0, 0, 1, false);
                 }
 
             } catch (err) {
+                // Error de red = Desconexión
                 updateUI(0, 0, 0, 0, 1, false); 
             }
         }
