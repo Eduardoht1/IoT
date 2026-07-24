@@ -287,11 +287,17 @@
 
             document.getElementById('val-rpm').innerText = rpm.toFixed(1);
             
-            // Lógica: Si está apagado, mostramos el objetivo guardado, si no, el de InfluxDB
+            // Lógica: Si está apagado, mostramos el objetivo guardado. Si está prendido, ignoramos el 0 de la latencia.
             if(motorEncendido) {
-                document.getElementById('val-setpoint').innerText = sp.toFixed(1);
-                let textoDirObj = dir === 1 ? 'CW (Horario)' : 'CCW (Antihorario)';
-                document.getElementById('val-dir-obj').innerText = textoDirObj;
+                if (sp === 0 && savedSetpoint !== 0) {
+                    document.getElementById('val-setpoint').innerText = savedSetpoint.toFixed(1);
+                    let textoDirObj = savedDirection === 1 ? 'CW (Horario)' : 'CCW (Antihorario)';
+                    document.getElementById('val-dir-obj').innerText = textoDirObj;
+                } else {
+                    document.getElementById('val-setpoint').innerText = sp.toFixed(1);
+                    let textoDirObj = dir === 1 ? 'CW (Horario)' : 'CCW (Antihorario)';
+                    document.getElementById('val-dir-obj').innerText = textoDirObj;
+                }
             } else {
                 document.getElementById('val-setpoint').innerText = savedSetpoint.toFixed(1);
                 let textoDirObj = savedDirection === 1 ? 'CW (Horario)' : 'CCW (Antihorario)';
@@ -318,6 +324,7 @@
         }
 
         async function fetchInfluxData() {
+            // === CONEXIÓN 4: Consulta Flux ===
             const QUERY_FLUX = `
             from(bucket: "${INFLUX_BUCKET}")
               |> range(start: -60s)
