@@ -148,14 +148,14 @@
                 const messageSp = new Paho.MQTT.Message(sp);
                 messageSp.destinationName = "iot/motor/setpoint";
                 mqttClient.send(messageSp);
-                savedSetpoint = parseFloat(sp); // Guardar valor
+                savedSetpoint = parseFloat(sp);
             }
 
             const dir = document.getElementById('input-dir').value;
             const messageDir = new Paho.MQTT.Message(dir);
             messageDir.destinationName = "iot/motor/direccion";
             mqttClient.send(messageDir);
-            savedDirection = parseInt(dir); // Guardar valor
+            savedDirection = parseInt(dir);
         }
 
         // Función de Power con estado en memoria
@@ -200,7 +200,7 @@
                 motorDot.classList.replace('shadow-[0_0_8px_rgba(34,197,94,0.8)]', 'shadow-[0_0_8px_rgba(239,68,68,0.8)]');
                 motorStatus.innerText = 'Motor Apagado';
 
-                // Deshabilitar botón de Actualizar visual y funcionalmente
+                // Deshabilitar botón de Actualizar
                 btnActualizar.disabled = true;
                 btnActualizar.className = "bg-gray-600 text-gray-400 p-2 rounded transition shadow-md font-bold w-full cursor-not-allowed";
 
@@ -258,7 +258,11 @@
                         ticks: { color: '#9ca3af' }
                     },
                     x: {
-                        grid: { display: false }
+                        grid: { display: true, color: '#374151' },
+                        ticks: { 
+                            color: '#9ca3af',
+                            maxTicksLimit: 10 // Límite para que no se sature de texto
+                        }
                     }
                 },
                 plugins: {
@@ -272,7 +276,6 @@
             const wifiDot = document.getElementById('wifi-dot');
             const wifiStatus = document.getElementById('wifi-status');
             
-            // Lógica del WiFi (Si hay conexión se pone verde, sino rojo)
             if(isConnected) {
                 wifiDot.classList.replace('bg-red-500', 'bg-green-500');
                 wifiDot.classList.replace('shadow-[0_0_8px_rgba(239,68,68,0.8)]', 'shadow-[0_0_8px_rgba(34,197,94,0.8)]');
@@ -285,7 +288,6 @@
 
             document.getElementById('val-rpm').innerText = rpm.toFixed(1);
             
-            // Lógica: Evita el parpadeo de latencia si el motor está encendido pero InfluxDB aún manda un 0 temporal
             if(motorEncendido) {
                 if (sp === 0 && savedSetpoint !== 0) {
                     document.getElementById('val-setpoint').innerText = savedSetpoint.toFixed(1);
@@ -314,19 +316,31 @@
             document.getElementById('val-pwm-pct').innerText = `Duty Cycle: ${pwmPct}%`;
             document.getElementById('val-error-pct').innerText = `Error Relativo: ${errPct}%`;
 
-            motorChart.data.datasets[0].data.shift();
-            motorChart.data.datasets[0].data.push(rpm);
-            motorChart.data.datasets[1].data.shift();
-            motorChart.data.datasets[1].data.push(sp);
-            motorChart.update();
+            // Pausar gráfica si el motor está apagado e incluir el tiempo en el eje X
+            if (motorEncendido) {
+                const now = new Date();
+                const timeString = now.getHours().toString().padStart(2, '0') + ':' +
+                                   now.getMinutes().toString().padStart(2, '0') + ':' +
+                                   now.getSeconds().toString().padStart(2, '0');
+
+                // Actualizar Eje X (Tiempo)
+                motorChart.data.labels.shift();
+                motorChart.data.labels.push(timeString);
+
+                // Actualizar Datos (Eje Y)
+                motorChart.data.datasets[0].data.shift();
+                motorChart.data.datasets[0].data.push(rpm);
+                motorChart.data.datasets[1].data.shift();
+                motorChart.data.datasets[1].data.push(sp);
+                
+                motorChart.update();
+            }
         }
 
         async function fetchInfluxData() {
-            // === CONEXIÓN 4: Consulta Flux ===
-            // Reducido a -5s para detectar la caída de la ESP más rápido
             const QUERY_FLUX = `
             from(bucket: "${INFLUX_BUCKET}")
-              |> range(start: -5s)
+              |> range(start: -60s)
               |> filter(fn: (r) => r["_field"] == "rpm" or r["_field"] == "setpoint" or r["_field"] == "error" or r["_field"] == "pwm" or r["_field"] == "direccion")
               |> last()
             `;
@@ -372,13 +386,9 @@
 
                 if (isConnected) {
                     updateUI(rpm, sp, error, pwm, dir, true);
-                } else {
-                    // Si no hay lecturas válidas en los últimos 5s, asume desconexión
-                    updateUI(0, 0, 0, 0, 1, false);
                 }
 
             } catch (err) {
-                // Error de red = Desconexión
                 updateUI(0, 0, 0, 0, 1, false); 
             }
         }
